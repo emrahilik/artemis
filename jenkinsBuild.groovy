@@ -35,13 +35,19 @@ def slavePodTemplate = """
             hostPath:
               path: /var/run/docker.sock
     """
-    def environment = " " 
+    def environment  = ""
+    def docker_image = ""
     def branch = "${scm.branches[0].name}".replaceAll(/^\*\//, '').replace("/", "-").toLowerCase()
-    def branch = "master"
+    docker_image = "fsadykov/artemis:${branch.replace('version/', 'v')}"
+    // master -> prod  dev-feature/* -> dev qa-feature/* -> qa 
     if (branch == "master") {
-        environment = "prod"
+      environment = "prod"
+    } else if (branch.contains('dev-feature')) {
+      environment = "dev"
+    } else if (branch.contains('qa-feature')) {
+      environment = "qa"
     }
-
+    println("${environment}")
     podTemplate(name: k8slabel, label: k8slabel, yaml: slavePodTemplate, showRawYaml: false) {
       node(k8slabel) {
         stage('Pull SCM') {
@@ -50,24 +56,38 @@ def slavePodTemplate = """
         container("docker") {
             dir('deployments/docker') {
                 stage("Docker Build") {
-                    sh "docker build -t fsadykov/artemis:${branch.replace('version/', 'v')}  ."
+                  sh "docker build -t ${docker_image}  ."
                 }
                 stage("Docker Login") {
                     withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'password', usernameVariable: 'username')]) {
-                        sh "docker login --username ${username} --password ${password}"
+                      sh "docker login --username ${username} --password ${password}"
                     }
                 }
                 stage("Docker Push") {
-                    sh "docker push fsadykov/artemis:${branch.replace('version/', 'v')}"
+                  sh "docker push ${docker_image}"
                 }
-
                 stage("Trigger Deploy") {
                   build job: 'artemis-deploy', 
                   parameters: [
                       [$class: 'BooleanParameterValue', name: 'terraformApply', value: true],
-                      [$class: 'StringParameterValue',  name: 'environment', value: "dev"]
+                      [$class: 'StringParameterValue',  name: 'environment', value: "${environment}"],
+                      [$class: 'StringParameterValue',  name: 'docker_image', value: "${docker_image}"]
                       ]
                 }
+            }
         }
       }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
